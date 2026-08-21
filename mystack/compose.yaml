@@ -458,6 +458,7 @@ services:
       - ${DOCKER_CONFIG_PATH}/stacks:/opt/stacks/config
       - ${MEDIA_BLACKBOX_PATH}/docker/stacks:/opt/stacks/download
       - ${DOCKER_CONFIG_PATH}/stacks/logs:/opt/stacks/logs
+      - ${DOCKER_CONFIG_PATH}/stacks/logs:/opt/stacks/logs
     healthcheck:
       test: ["CMD-SHELL", "curl -fsSL http://localhost:7788/ > /dev/null || exit 1"]
       interval: 30s
