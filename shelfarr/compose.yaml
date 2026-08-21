@@ -1,0 +1,23 @@
+services:
+  shelfarr:
+    image: ghcr.io/pedro-revez-silva/shelfarr:latest
+    container_name: shelfarr
+    restart: unless-stopped
+    ports:
+      - "5056:80"
+    volumes:
+      - /home/docker/shelfarr/data:/rails/storage
+      - /media/Blackbox/data/media/audiobooks:/audiobooks
+      - /media/Blackbox/data/media/books:/ebooks
+      - /home/docker/shelfarr/downloads:/downloads
+    environment:
+      - SOLID_QUEUE_IN_PUMA=1
+      - PUID=1000
+      - PGID=1000
+      - CHOWN_ON_START=auto
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/up"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
