@@ -1,0 +1,705 @@
+#==============================================================================
+# Portainer Stack: mystack
+# - All credentials sourced from .env
+# - Healthchecks added for autoheal coverage
+# - WireGuard (Gluetun) + qBittorrent added for VPN'd torrenting
+#==============================================================================
+
+version: "3.8"
+
+#==============================================================================
+# SERVICES
+#==============================================================================
+services:
+
+  # ---------------------------------------------------------------------------
+  # System & Container Maintenance
+  # ---------------------------------------------------------------------------
+
+  docker-socket-proxy-ro:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy-ro
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - INFO=1
+      - PING=1
+      - VERSION=1
+      - POST=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - default
+
+  docker-socket-proxy-autoheal:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy-autoheal
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - POST=1
+      - ALLOW_RESTARTS=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - default
+
+  docker-socket-proxy-watchtower:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy-watchtower
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - POST=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - default
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: autoheal
+    restart: unless-stopped
+    depends_on:
+      - docker-socket-proxy-autoheal
+    environment:
+      - TZ=${TZ}
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - DOCKER_SOCK=tcp://docker-socket-proxy-autoheal:2375
+
+  watchtower:
+    image: nickfedor/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    command: --interval 43200 --cleanup
+    depends_on:
+      - docker-socket-proxy-watchtower
+    environment:
+      - TZ=${TZ}
+      - DOCKER_HOST=tcp://docker-socket-proxy-watchtower:2375
+
+  glances:
+    image: nicolargo/glances:latest
+    container_name: glances
+    restart: unless-stopped
+    pid: host
+    ports:
+      - "61208:61208"
+    depends_on:
+      - docker-socket-proxy-ro
+    environment:
+      - TZ=${TZ}
+      - GLANCES_OPT=${GLANCES_OPT}
+      - DOCKER_HOST=tcp://docker-socket-proxy-ro:2375
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/glances:/glances/conf
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:61208/api/4/all > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  speedtest:
+    image: henrywhitaker3/speedtest-tracker:latest
+    container_name: speedtest
+    restart: unless-stopped
+    ports:
+      - "8765:80"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - OOKLA_EULA_GDPR=${SPEEDTEST_OOKLA_EULA_GDPR}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/speedtest:/config
+    logging:
+      driver: json-file
+      options:
+        max-file: "10"
+        max-size: "1000k"
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Networking, DNS & Reverse Proxy
+  # ---------------------------------------------------------------------------
+
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    environment:
+      - TZ=${TZ}
+      - DB_SQLITE_FILE=${NPM_DB_SQLITE_FILE}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/npm/data:/data
+      - ${DOCKER_CONFIG_PATH}/npm/letsencrypt:/etc/letsencrypt
+    networks:
+      - npm-network
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/check-health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  cloudflare-ddns:
+    image: favonia/cloudflare-ddns:latest
+    container_name: cloudflare-ddns
+    network_mode: host
+    restart: always
+    read_only: true
+    cap_drop:
+      - all
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - CF_API_TOKEN=${CF_API_TOKEN}
+      - DOMAINS=${CF_DOMAINS}
+      - PROXIED=${CF_PROXIED}
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    ports:
+      - "${FLARESOLVERR_PORT:-8191}:8191"
+    environment:
+      - TZ=${TZ}
+      - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL}
+      - LOG_HTML=${FLARESOLVERR_LOG_HTML}
+      - CAPTCHA_SOLVER=${FLARESOLVERR_CAPTCHA_SOLVER}
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8191/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Dashboard
+  # ---------------------------------------------------------------------------
+
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - docker-socket-proxy-ro
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - HOMEPAGE_ALLOWED_HOSTS=${HOMEPAGE_ALLOWED_HOSTS}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/homepage:/app/config
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Media Server
+  # ---------------------------------------------------------------------------
+
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    network_mode: host
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "44"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - VERSION=${PLEX_VERSION}
+      - PLEX_CLAIM=${PLEX_CLAIM_TOKEN}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/plex/config:/config
+      - ${DOCKER_CONFIG_PATH}/plex/transcode:/transcode
+      - ${MEDIA_BLACKBOX_PATH}/data/media:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:32400/identity > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  tautulli:
+    image: lscr.io/linuxserver/tautulli:latest
+    container_name: tautulli
+    restart: unless-stopped
+    ports:
+      - "8181:8181"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/tautulli/config:/config
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8181/status > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  overseerr:
+    image: fallenbagel/jellyseerr:latest
+    container_name: jellyseerr
+    restart: unless-stopped
+    ports:
+      - "5055:5055"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/overseerr:/app/config
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # *arr Suite (Indexer + Movie/TV automation)
+  # ---------------------------------------------------------------------------
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    ports:
+      - "9696:9696"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/prowlarr:/config
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:9696/ping > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/radarr:/config
+      - ${MEDIA_BLACKBOX_PATH}/data:/data
+    networks:
+      - npm-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:7878/ping > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    ports:
+      - "8989:8989"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/sonarr:/config
+      - ${MEDIA_BLACKBOX_PATH}/data:/data
+    networks:
+      - npm-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8989/ping > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Download Clients & Post-Processing
+  # ---------------------------------------------------------------------------
+
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/sabnzbd:/config
+      - ${MEDIA_BLACKBOX_PATH}/data/usenet:/data/usenet
+    networks:
+      - npm-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8080/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  rdtclient:
+    image: rogerfar/rdtclient:latest
+    container_name: rdtclient
+    restart: always
+    ports:
+      - "6500:6500"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/rdtclient:/data/db
+      - ${MEDIA_BLACKBOX_PATH}/data/torrents/completed:/data/downloads
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:6500/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  unpackerr:
+    image: golift/unpackerr:latest
+    container_name: unpackerr
+    restart: always
+    user: "${PUID}:${PGID}"
+    environment:
+      - TZ=${TZ}
+      - UN_SONARR_0_URL=${UNPACKERR_SONARR_0_URL}
+      - UN_SONARR_0_API_KEY=${UNPACKERR_SONARR_0_API_KEY}
+      - UN_RADARR_0_URL=${UNPACKERR_RADARR_0_URL}
+      - UN_RADARR_0_API_KEY=${UNPACKERR_RADARR_0_API_KEY}
+    volumes:
+      - ${MEDIA_BLACKBOX_PATH}/data:/downloads
+      - ${DOCKER_CONFIG_PATH}/unpackerr/logs:/data/logs
+
+  stacks:
+    image: zelest/stacks:latest
+    container_name: stacks
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    ports:
+      - "7788:7788"
+    environment:
+      - TZ=${TZ}
+      - USERNAME=${STACKS_USERNAME}
+      - PASSWORD=${STACKS_PASSWORD}
+      - SOLVERR_URL=https://flaresolverr.${MY_DOMAIN}/
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/stacks:/opt/stacks/config
+      - ${MEDIA_BLACKBOX_PATH}/docker/stacks:/opt/stacks/download
+      - ${DOCKER_CONFIG_PATH}/stacks/logs:/opt/stacks/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:7788/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # VPN + qBittorrent (Gluetun routes qBittorrent through ProtonVPN WireGuard)
+  # ---------------------------------------------------------------------------
+
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    ports:
+      - "${QBIT_WEBUI_PORT:-8090}:${QBIT_WEBUI_PORT:-8090}"
+      - "${QBIT_TORRENT_PORT:-6881}:${QBIT_TORRENT_PORT:-6881}"
+      - "${QBIT_TORRENT_PORT:-6881}:${QBIT_TORRENT_PORT:-6881}/udp"
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=${PROTONVPN_SERVER_COUNTRIES}
+      - SERVER_CITIES=${PROTONVPN_SERVER_CITIES}
+      - SERVER_NAMES=${PROTONVPN_SERVER_NAMES}
+      - FIREWALL_OUTBOUND_SUBNETS=${LAN_SUBNET},172.16.0.0/12
+      - DNS_SERVER=on
+      - WIREGUARD_MTU=1280
+      # ---- Port forwarding ----
+      - VPN_PORT_FORWARDING=on
+      - VPN_PORT_FORWARDING_PROVIDER=protonvpn
+      # Run this whenever Proton hands out a new port. qBit shares this
+      # container's netns, so 127.0.0.1:WEBUI_PORT IS the qBit WebUI.
+      # --retry-connrefused handles the startup race if qBit isn't up yet.
+      - 'VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c ''wget -qO- --retry-connrefused --tries=5 --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:${QBIT_WEBUI_PORT:-8090}/api/v2/app/setPreferences'''
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/gluetun:/gluetun
+    networks:
+      - npm-network
+    healthcheck:
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - WEBUI_PORT=${QBIT_WEBUI_PORT:-8090}
+      - TORRENTING_PORT=${QBIT_TORRENT_PORT:-6881}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/qbittorrent:/config
+      - ${MEDIA_BLACKBOX_PATH}/data/torrents:/data/torrents
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:${QBIT_WEBUI_PORT:-8090}/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Profilarr (Sonarr/Radarr quality-profile & custom-format manager)
+  # ---------------------------------------------------------------------------
+
+  profilarr:
+    image: ghcr.io/dictionarry-hub/profilarr:latest
+    container_name: profilarr
+    restart: unless-stopped
+    depends_on:
+      profilarr-parser:
+        condition: service_healthy
+    ports:
+      - "6868:6868"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - UMASK=022
+      - TZ=${TZ}
+      # Required when accessing Profilarr through your reverse proxy
+      - ORIGIN=https://profilarr.${MY_DOMAIN}
+      # Internal link to the parser sidecar for CF/QP testing
+      - PARSER_HOST=profilarr-parser
+      - PARSER_PORT=5000
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/profilarr:/config
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6868/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  profilarr-parser:
+    # Optional sidecar — only needed for custom-format / quality-profile testing.
+    # Linking, syncing, and pulling TRaSH guides work fine without it; remove
+    # this service and the PARSER_* vars above if you'd rather skip it.
+    image: ghcr.io/dictionarry-hub/profilarr-parser:latest
+    container_name: profilarr-parser
+    restart: unless-stopped
+    expose:
+      - "5000"
+    environment:
+      - TZ=${TZ}
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Audio Bridging
+  # ---------------------------------------------------------------------------
+
+  airconnect-sonos:
+    image: 1activegeek/airconnect:latest
+    container_name: airconnect_sonos
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/airconnect:/config
+
+  # ---------------------------------------------------------------------------
+  # Backup
+  # ---------------------------------------------------------------------------
+
+  duplicati:
+    image: lscr.io/linuxserver/duplicati:latest
+    container_name: duplicati
+    restart: unless-stopped
+    ports:
+      - "8200:8200"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - SETTINGS_ENCRYPTION_KEY=${DUPLICATI_ENCRYPTION_KEY}
+      - DUPLICATI__WEBSERVICE_PASSWORD=${DUPLICATI_WEBSERVICE_PASSWORD}
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/duplicati/config:/config
+      - ${DOCKER_CONFIG_PATH}/duplicati/backups:/backups
+      - /home:/source
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8200/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Document Management (Paperless-NGX + Redis)
+  # ---------------------------------------------------------------------------
+
+  paperless-ngx:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless_ngx
+    restart: unless-stopped
+    depends_on:
+      - paperless-redis
+    ports:
+      - "${PAPERLESS_PORT_HOST}:8000"
+    environment:
+      USERMAP_UID: ${PUID}
+      USERMAP_GID: ${PGID}
+      PAPERLESS_REDIS: redis://${PAPERLESS_REDIS_HOST}:${PAPERLESS_REDIS_PORT}
+      PAPERLESS_DBENGINE: sqlite
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
+      PAPERLESS_TIME_ZONE: ${TZ}
+      PAPERLESS_OCR_LANGUAGES: ${PAPERLESS_OCR_LANGUAGES}
+      PAPERLESS_CONSUMPTION_DIR: /usr/src/paperless/consume
+      PAPERLESS_DATA_DIR: /usr/src/paperless/data
+      PAPERLESS_MEDIA_ROOT: /usr/src/paperless/media
+      PAPERLESS_EXPORT_DIR: /usr/src/paperless/export
+      PAPERLESS_URL: https://paperless.${MY_DOMAIN}
+      PAPERLESS_CSRF_TRUSTED_ORIGINS: https://*.${MY_DOMAIN}
+      PAPERLESS_CORS_ALLOWED_HOSTS: https://paperless.${MY_DOMAIN}
+    volumes:
+      - ${PAPERLESS_DATA_DIR_HOST}:/usr/src/paperless/data
+      - ${PAPERLESS_MEDIA_DIR_HOST}:/usr/src/paperless/media
+      - ${PAPERLESS_CONSUME_DIR_HOST}:/usr/src/paperless/consume
+      - ${PAPERLESS_EXPORT_DIR_HOST}:/usr/src/paperless/export
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - npm-network
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8000/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  paperless-redis:
+    image: redis:7-alpine
+    container_name: paperless_redis
+    restart: unless-stopped
+    volumes:
+      - ${DOCKER_CONFIG_PATH}/paperless-ngx/redisdata:/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+#==============================================================================
+# NETWORKS
+#==============================================================================
+networks:
+  npm-network:
+    external: true
+  default:
+    driver: bridge

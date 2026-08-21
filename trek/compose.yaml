@@ -1,0 +1,14 @@
+services:
+  trek:
+    image: mauriceboe/trek:latest
+    container_name: trek
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
+      - TZ=America/Denver
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    volumes:
+      - /home/docker/trek/data:/app/data
+      - /home/docker/trek/uploads:/app/uploads

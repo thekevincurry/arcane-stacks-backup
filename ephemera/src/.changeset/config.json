@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": [
+    "@changesets/cli/changelog",
+    {
+      "repo": "OrwellianEpilogue/ephemera"
+    }
+  ],
+  "commit": false,
+  "fixed": [["@ephemera/api", "@ephemera/web", "@ephemera/shared"]],
+  "linked": [],
+  "access": "restricted",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": []
+}

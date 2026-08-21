@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1762277046918,
+      "tag": "0000_tearful_secret_warriors",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1762945234788,
+      "tag": "0001_fancy_katie_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1762955938365,
+      "tag": "0002_loving_mongoose",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1762956478473,
+      "tag": "0003_curved_wilson_fisk",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1762959184532,
+      "tag": "0004_dear_magus",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1762966882094,
+      "tag": "0005_fair_the_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1762972621289,
+      "tag": "0006_peaceful_dazzler",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1763024416067,
+      "tag": "0007_brown_tiger_shark",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1763031739828,
+      "tag": "0008_public_human_torch",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1763040428687,
+      "tag": "0009_nosy_ironclad",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1763042482715,
+      "tag": "0010_steep_hex",
+      "breakpoints": true
+    }
+  ]
+}
