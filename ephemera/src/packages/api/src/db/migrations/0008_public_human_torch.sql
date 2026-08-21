@@ -1,1 +1,0 @@
-ALTER TABLE `indexer_settings` ADD `base_url` text DEFAULT 'http://localhost:8286' NOT NULL;

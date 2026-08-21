@@ -1,1 +1,0 @@
-ALTER TABLE `app_settings` ADD `library_url` text;
