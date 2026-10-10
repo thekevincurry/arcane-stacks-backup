@@ -1,0 +1,93 @@
+# Quartermaster Companion — read-only profile.
+# Source: https://github.com/lewlew-glitch/qm_companion (docker-compose.published.yml)
+# Secrets and version pin live in .env. Keep SECRET_KEY unchanged across upgrades.
+
+services:
+  socket-proxy:
+    image: ghcr.io/lewlew-glitch/qm-companion-socket-proxy:${QM_COMPANION_TAG:-latest}
+    container_name: qm-socket-proxy
+    labels:
+      qm.protected: "true"
+    environment:
+      QM_PROXY_KEY: "${QM_PROXY_KEY:?QM_PROXY_KEY is required}"
+      CONTAINERS: 1
+      IMAGES: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      INFO: 1
+      PING: 1
+      SYSTEM: 1
+      POST: 0
+      EXEC: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+      - /run:size=1m,mode=0755
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O - -T 3 --header="x-qm-proxy-key: $${QM_PROXY_KEY}"
+          http://127.0.0.1:2375/_ping | grep -qx OK
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks: [qm-internal]
+    restart: unless-stopped
+
+  companion:
+    image: ghcr.io/lewlew-glitch/qm-companion:${QM_COMPANION_TAG:-latest}
+    container_name: qm-companion
+    labels:
+      qm.protected: "true"
+    depends_on: [socket-proxy]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "${QM_MOBILE_BIND_IP:?QM_MOBILE_BIND_IP is required}:8788:8788"
+    environment:
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required}"
+      QM_HOST: "192.168.1.54"
+      BIND_ADDRESS: "0.0.0.0"
+      DOCKER_HOST: "tcp://socket-proxy:2375"
+      QM_PROXY_KEY: "${QM_PROXY_KEY:?QM_PROXY_KEY is required}"
+      DOCKER_ACCESS_MAX: "read"
+      # Persistent mobile connection (docker-compose.mobile.yml). Browser sign-in also moves here.
+      MOBILE_API_ENABLED: "true"
+      MOBILE_ENROLMENT_ENABLED: "${MOBILE_ENROLMENT_ENABLED:-true}"
+      QM_ADVERTISED_ORIGIN: "${QM_ADVERTISED_ORIGIN:?QM_ADVERTISED_ORIGIN is required}"
+      MOBILE_PORT: "8788"
+      MOBILE_BIND_ADDRESS: "0.0.0.0"
+    volumes:
+      - /home/docker/radarr/config.xml:/stack/radarr/config.xml:ro
+      - /home/docker/sonarr/config.xml:/stack/sonarr/config.xml:ro
+      - /home/docker/prowlarr/config.xml:/stack/prowlarr/config.xml:ro
+      - /home/docker/sabnzbd/sabnzbd.ini:/stack/sabnzbd/sabnzbd.ini:ro
+      - /home/docker/overseerr/settings.json:/stack/jellyseerr/settings.json:ro
+      - qm-data:/data
+    networks: [qm-internal, qm-egress]
+    restart: unless-stopped
+
+volumes:
+  qm-data:
+
+networks:
+  qm-internal:
+    driver: bridge
+    internal: true
+  qm-egress:
+    driver: bridge
