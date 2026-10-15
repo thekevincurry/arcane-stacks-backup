@@ -77,7 +77,7 @@ services:
       - /home/docker/sonarr/config.xml:/stack/sonarr/config.xml:ro
       - /home/docker/prowlarr/config.xml:/stack/prowlarr/config.xml:ro
       - /home/docker/sabnzbd/sabnzbd.ini:/stack/sabnzbd/sabnzbd.ini:ro
-      - /home/docker/overseerr/settings.json:/stack/jellyseerr/settings.json:ro
+      - /home/docker/seerr/settings.json:/stack/jellyseerr/settings.json:ro
       - qm-data:/data
     networks: [qm-internal, qm-egress]
     restart: unless-stopped
