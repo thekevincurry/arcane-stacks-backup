@@ -1,0 +1,27 @@
+# Cloudflare Tunnel: outbound-only connector for hostnames protected by Cloudflare Access.
+# Hostnames and their targets are configured in the Cloudflare Zero Trust dashboard
+# (Networks > Tunnels > this tunnel > Published application routes). The token in .env
+# identifies this connector; treat it as a secret.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    labels:
+      autoheal: "true"
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 run
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:?TUNNEL_TOKEN is required}"
+    healthcheck:
+      # The image has no shell; cloudflared's own readiness check uses the metrics server.
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "localhost:2000", "ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # npm-network lets tunnel routes reach containers by name (e.g. logwatch-web:80).
+    networks: [default, npm-network]
+
+networks:
+  npm-network:
+    external: true

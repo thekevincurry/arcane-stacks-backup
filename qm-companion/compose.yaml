@@ -7,6 +7,7 @@ services:
     image: ghcr.io/lewlew-glitch/qm-companion-socket-proxy:${QM_COMPANION_TAG:-latest}
     container_name: qm-socket-proxy
     labels:
+      autoheal: "true"
       qm.protected: "true"
     environment:
       QM_PROXY_KEY: "${QM_PROXY_KEY:?QM_PROXY_KEY is required}"
@@ -44,6 +45,7 @@ services:
     image: ghcr.io/lewlew-glitch/qm-companion:${QM_COMPANION_TAG:-latest}
     container_name: qm-companion
     labels:
+      autoheal: "true"
       qm.protected: "true"
     depends_on: [socket-proxy]
     read_only: true

@@ -1,0 +1,7 @@
+# Nginx Proxy Manager access and error logs (jc21 image), mounted read-only at /var/log/npm.
+filenames:
+  - /var/log/npm/proxy-host-*.log
+  - /var/log/npm/fallback_*.log
+  - /var/log/npm/dead-host-*.log
+labels:
+  type: nginx-proxy-manager

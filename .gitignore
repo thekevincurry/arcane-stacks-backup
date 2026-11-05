@@ -1,3 +1,8 @@
 .DS_Store
 *.log
 bookorbit/data/
+
+# Secrets stay on the server. Every .env is backed up, encrypted, by Duplicati (both jobs); this repo holds
+# only compose files and code. Untracked 2026-11-05 after GitHub push protection rejected an API key.
+.env
+**/.env

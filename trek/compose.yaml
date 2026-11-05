@@ -2,6 +2,8 @@ services:
   trek:
     image: mauriceboe/trek:latest
     container_name: trek
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     ports:
       - "3001:3000"

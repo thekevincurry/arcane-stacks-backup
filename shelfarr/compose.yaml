@@ -2,6 +2,8 @@ services:
   shelfarr:
     image: ghcr.io/pedro-revez-silva/shelfarr:latest
     container_name: shelfarr
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     ports:
       - "5056:80"

@@ -1,11 +1,9 @@
 #==============================================================================
 # Portainer Stack: mystack
 # - All credentials sourced from .env
-# - Healthchecks added for autoheal coverage
+# - Healthchecks added for auto-heal coverage (Arcane auto-heal since 2026-11-04; autoheal=true labels are now informational)
 # - WireGuard (Gluetun) + qBittorrent added for VPN'd torrenting
 #==============================================================================
-
-version: "3.8"
 
 #==============================================================================
 # SERVICES
@@ -19,6 +17,8 @@ services:
   docker-socket-proxy-ro:
     image: tecnativa/docker-socket-proxy:latest
     container_name: docker-socket-proxy-ro
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
     restart: unless-stopped
     environment:
       - CONTAINERS=1
@@ -32,22 +32,11 @@ services:
     networks:
       - default
 
-  docker-socket-proxy-autoheal:
-    image: tecnativa/docker-socket-proxy:latest
-    container_name: docker-socket-proxy-autoheal
-    restart: unless-stopped
-    environment:
-      - CONTAINERS=1
-      - POST=1
-      - ALLOW_RESTARTS=1
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - default
-
   docker-socket-proxy-watchtower:
     image: tecnativa/docker-socket-proxy:latest
     container_name: docker-socket-proxy-watchtower
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
     restart: unless-stopped
     environment:
       - CONTAINERS=1
@@ -58,53 +47,42 @@ services:
     networks:
       - default
 
-  autoheal:
-    image: willfarrell/autoheal:latest
-    container_name: autoheal
-    restart: unless-stopped
-    depends_on:
-      - docker-socket-proxy-autoheal
-    environment:
-      - TZ=${TZ}
-      - AUTOHEAL_CONTAINER_LABEL=all
-      - DOCKER_SOCK=tcp://docker-socket-proxy-autoheal:2375
-
   watchtower:
     image: nickfedor/watchtower:latest
     container_name: watchtower
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
     restart: unless-stopped
-    command: --interval 43200 --cleanup
+    # Notify-only by default; containers labelled watchtower.monitor-only=false are updated automatically.
+    command: --schedule "0 0 5 * * *" --cleanup --monitor-only --label-take-precedence --notification-report --no-startup-message
     depends_on:
       - docker-socket-proxy-watchtower
     environment:
       - TZ=${TZ}
       - DOCKER_HOST=tcp://docker-socket-proxy-watchtower:2375
-
-  glances:
-    image: nicolargo/glances:latest
-    container_name: glances
-    restart: unless-stopped
-    pid: host
-    ports:
-      - "61208:61208"
-    depends_on:
-      - docker-socket-proxy-ro
-    environment:
-      - TZ=${TZ}
-      - GLANCES_OPT=${GLANCES_OPT}
-      - DOCKER_HOST=tcp://docker-socket-proxy-ro:2375
-    volumes:
-      - ${DOCKER_CONFIG_PATH}/glances:/glances/conf
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsSL http://localhost:61208/api/4/all > /dev/null || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      - WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL}
+      - WATCHTOWER_NOTIFICATIONS_HOSTNAME=homeserver
+      - WATCHTOWER_NOTIFICATION_TITLE_TAG=Watchtower
+      - |
+        WATCHTOWER_NOTIFICATION_TEMPLATE=
+        {{- if .Report -}}{{- with .Report -}}
+        {{- if (or .Updated .Failed .Stale) -}}
+        {{- range .Updated}}✅ Updated {{.Name}} ({{.ImageName}})
+        {{end -}}
+        {{- range .Stale}}⬆️ Update available: {{.Name}} ({{.ImageName}})
+        {{end -}}
+        {{- range .Failed}}❌ Update failed: {{.Name}}: {{.Error}}
+        {{end -}}
+        {{- end -}}{{- end -}}{{- end -}}
 
   speedtest:
-    image: henrywhitaker3/speedtest-tracker:latest
+    # Speedtest Tracker by Alex Justesen (maintained successor to henrywhitaker3's, replaced 2026-11-04).
+    # Container name and port kept so the tunnel route and Homepage need no changes.
+    # Old data stays in ${DOCKER_CONFIG_PATH}/speedtest (not mounted).
+    image: lscr.io/linuxserver/speedtest-tracker:latest
     container_name: speedtest
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
     restart: unless-stopped
     ports:
       - "8765:80"
@@ -112,9 +90,20 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
-      - OOKLA_EULA_GDPR=${SPEEDTEST_OOKLA_EULA_GDPR}
+      - APP_KEY=${SPEEDTEST_APP_KEY}
+      - APP_URL=https://speedtest.masterbateshome.com
+      - DB_CONNECTION=sqlite
+      - DISPLAY_TIMEZONE=${TZ}
+      - SPEEDTEST_SCHEDULE=0 * * * *
+      - PRUNE_RESULTS_OLDER_THAN=0
     volumes:
-      - ${DOCKER_CONFIG_PATH}/speedtest:/config
+      - ${DOCKER_CONFIG_PATH}/speedtest-tracker:/config
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/api/healthcheck > /dev/null || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     logging:
       driver: json-file
       options:
@@ -123,12 +112,6 @@ services:
     networks:
       - npm-network
       - default
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsSL http://localhost/ > /dev/null || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
 
   # ---------------------------------------------------------------------------
   # Networking, DNS & Reverse Proxy
@@ -138,6 +121,8 @@ services:
     image: jc21/nginx-proxy-manager:latest
     container_name: nginx-proxy-manager
     restart: unless-stopped
+    labels:
+      autoheal: "true"
     ports:
       - "80:80"
       - "81:81"
@@ -160,6 +145,8 @@ services:
   cloudflare-ddns:
     image: favonia/cloudflare-ddns:latest
     container_name: cloudflare-ddns
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
     network_mode: host
     restart: always
     read_only: true
@@ -182,6 +169,9 @@ services:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     ports:
       - "${FLARESOLVERR_PORT:-8191}:8191"
     environment:
@@ -208,6 +198,9 @@ services:
     image: ghcr.io/gethomepage/homepage:latest
     container_name: homepage
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     user: "${PUID}:${PGID}"
     ports:
       - "3000:3000"
@@ -218,6 +211,21 @@ services:
       - PGID=${PGID}
       - TZ=${TZ}
       - HOMEPAGE_ALLOWED_HOSTS=${HOMEPAGE_ALLOWED_HOSTS}
+      # Widget secrets live in files (see /home/docker/homepage/secrets, mode 600):
+      - HOMEPAGE_FILE_UNIFI_PASSWORD=/app/config/secrets/UNIFI_PASSWORD
+      - HOMEPAGE_FILE_UNIFI_KEY=/app/config/secrets/UNIFI_KEY
+      - HOMEPAGE_FILE_SPEEDTEST_KEY=/app/config/secrets/SPEEDTEST_KEY
+      - HOMEPAGE_FILE_NPM_PASSWORD=/app/config/secrets/NPM_PASSWORD
+      - HOMEPAGE_FILE_PAPERLESS_PASSWORD=/app/config/secrets/PAPERLESS_PASSWORD
+      - HOMEPAGE_FILE_PLEX_KEY=/app/config/secrets/PLEX_KEY
+      - HOMEPAGE_FILE_TAUTULLI_KEY=/app/config/secrets/TAUTULLI_KEY
+      - HOMEPAGE_FILE_SONARR_KEY=/app/config/secrets/SONARR_KEY
+      - HOMEPAGE_FILE_RADARR_KEY=/app/config/secrets/RADARR_KEY
+      - HOMEPAGE_FILE_PROWLARR_KEY=/app/config/secrets/PROWLARR_KEY
+      - HOMEPAGE_FILE_SEERR_KEY=/app/config/secrets/SEERR_KEY
+      - HOMEPAGE_FILE_BLACKBOX_PASSWORD=/app/config/secrets/BLACKBOX_PASSWORD
+      - HOMEPAGE_FILE_SABNZBD_KEY=/app/config/secrets/SABNZBD_KEY
+      - HOMEPAGE_FILE_CROWDSEC_PASSWORD=/app/config/secrets/CROWDSEC_PASSWORD
     volumes:
       - ${DOCKER_CONFIG_PATH}/homepage:/app/config
     networks:
@@ -239,6 +247,9 @@ services:
     container_name: plex
     network_mode: host
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     devices:
       - /dev/dri:/dev/dri
     group_add:
@@ -264,6 +275,9 @@ services:
     image: lscr.io/linuxserver/tautulli:latest
     container_name: tautulli
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     ports:
       - "8181:8181"
     environment:
@@ -290,6 +304,8 @@ services:
     container_name: seerr
     init: true
     restart: unless-stopped
+    labels:
+      autoheal: "true"
     ports:
       - "5055:5055"
     environment:
@@ -314,6 +330,9 @@ services:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     ports:
       - "9696:9696"
     environment:
@@ -336,6 +355,9 @@ services:
     image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     ports:
       - "7878:7878"
     environment:
@@ -358,6 +380,9 @@ services:
     image: lscr.io/linuxserver/sonarr:latest
     container_name: sonarr
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     ports:
       - "8989:8989"
     environment:
@@ -384,6 +409,9 @@ services:
     image: lscr.io/linuxserver/sabnzbd:latest
     container_name: sabnzbd
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+      autoheal: "true"
     ports:
       - "8085:8080"
     environment:
@@ -406,6 +434,8 @@ services:
     image: rogerfar/rdtclient:latest
     container_name: rdtclient
     restart: always
+    labels:
+      autoheal: "true"
     ports:
       - "6500:6500"
     environment:
@@ -432,6 +462,8 @@ services:
   unpackerr:
     image: golift/unpackerr:latest
     container_name: unpackerr
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
     restart: always
     user: "${PUID}:${PGID}"
     environment:
@@ -545,12 +577,10 @@ services:
     networks:
       - npm-network
       - default
+    # No healthcheck: startup and sync work outlast any reasonable timeout, and autoheal
+    # then restart-looped it (Sep 2026). The restart policy still recovers real crashes.
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6868/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      disable: true
 
   profilarr-parser:
     # Optional sidecar — only needed for custom-format / quality-profile testing.
@@ -559,6 +589,8 @@ services:
     image: ghcr.io/dictionarry-hub/profilarr-parser:latest
     container_name: profilarr-parser
     restart: unless-stopped
+    labels:
+      autoheal: "true"
     expose:
       - "5000"
     environment:
@@ -579,6 +611,8 @@ services:
   airconnect-sonos:
     image: 1activegeek/airconnect:latest
     container_name: airconnect_sonos
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
     network_mode: host
     restart: unless-stopped
     environment:
@@ -594,6 +628,8 @@ services:
     image: lscr.io/linuxserver/duplicati:latest
     container_name: duplicati
     restart: unless-stopped
+    labels:
+      autoheal: "true"
     ports:
       - "8200:8200"
     environment:
@@ -606,6 +642,13 @@ services:
       - ${DOCKER_CONFIG_PATH}/duplicati/config:/config
       - ${DOCKER_CONFIG_PATH}/duplicati/backups:/backups
       - /home:/source
+      # Second backup destination: Synology Blackbox (NFS at /media/Blackbox). Fail instead of writing
+      # to the local disk if the NAS folder isn't there.
+      - type: bind
+        source: /media/Blackbox/Backups/Duplicati-HomeServer
+        target: /nas-backup
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD-SHELL", "curl -fsSL http://localhost:8200/ > /dev/null || exit 1"]
       interval: 30s
@@ -621,8 +664,12 @@ services:
     image: ghcr.io/paperless-ngx/paperless-ngx:latest
     container_name: paperless_ngx
     restart: unless-stopped
+    labels:
+      autoheal: "true"
     depends_on:
       - paperless-redis
+      - tika
+      - gotenberg
     ports:
       - "${PAPERLESS_PORT_HOST}:8000"
     environment:
@@ -631,8 +678,6 @@ services:
       PAPERLESS_REDIS: redis://${PAPERLESS_REDIS_HOST}:${PAPERLESS_REDIS_PORT}
       PAPERLESS_DBENGINE: sqlite
       PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
-      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER}
-      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
       PAPERLESS_TIME_ZONE: ${TZ}
       PAPERLESS_OCR_LANGUAGES: ${PAPERLESS_OCR_LANGUAGES}
       PAPERLESS_CONSUMPTION_DIR: /usr/src/paperless/consume
@@ -642,6 +687,10 @@ services:
       PAPERLESS_URL: https://paperless.${MY_DOMAIN}
       PAPERLESS_CSRF_TRUSTED_ORIGINS: https://*.${MY_DOMAIN}
       PAPERLESS_CORS_ALLOWED_HOSTS: https://paperless.${MY_DOMAIN}
+      # Tika + Gotenberg turn .eml bodies and Office files into documents.
+      PAPERLESS_TIKA_ENABLED: "true"
+      PAPERLESS_TIKA_ENDPOINT: http://tika:9998
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://gotenberg:3000
     volumes:
       - ${PAPERLESS_DATA_DIR_HOST}:/usr/src/paperless/data
       - ${PAPERLESS_MEDIA_DIR_HOST}:/usr/src/paperless/media
@@ -658,10 +707,31 @@ services:
       retries: 5
       start_period: 120s
 
+  # Tika must stay on 2.x: Tika 4 rejects the JSON request paperless-ngx's client
+  # sends (HTTP 406 on /tika/text), which breaks .eml consumption.
+  tika:
+    image: apache/tika:2.9.2.1-full
+    container_name: tika
+    restart: unless-stopped
+    networks:
+      - default
+
+  # Don't add --chromium-disable-routes: Paperless needs /forms/chromium/convert/html.
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: gotenberg
+    labels:
+      com.centurylinklabs.watchtower.monitor-only: "false"
+    restart: unless-stopped
+    networks:
+      - default
+
   paperless-redis:
     image: redis:7-alpine
     container_name: paperless_redis
     restart: unless-stopped
+    labels:
+      autoheal: "true"
     volumes:
       - ${DOCKER_CONFIG_PATH}/paperless-ngx/redisdata:/data
       - /etc/localtime:/etc/localtime:ro
@@ -680,5 +750,9 @@ services:
 networks:
   npm-network:
     external: true
+  # The stack's containers were first created under the old Portainer project
+  # "super_1_1" and talk to each other on this network. Using it as the default keeps
+  # them together while they move into this project.
   default:
-    driver: bridge
+    name: super_1_1_default
+    external: true

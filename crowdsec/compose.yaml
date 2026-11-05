@@ -1,0 +1,42 @@
+# CrowdSec security engine: reads Nginx Proxy Manager's logs, detects attacks (brute force, scanners,
+# known CVE probes) and shares decisions with bouncers. It blocks nothing by itself: the firewall bouncer
+# on the host (crowdsec-firewall-bouncer-nftables) pulls decisions from the local API on 127.0.0.1:8280
+# and drops those IPs before they reach NPM.
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - COLLECTIONS=crowdsecurity/nginx-proxy-manager crowdsecurity/whitelist-good-actors
+      # Registers the host firewall bouncer with this key at startup (key is in .env).
+      - BOUNCER_KEY_firewall=${CROWDSEC_BOUNCER_KEY}
+    volumes:
+      - /home/docker/crowdsec/config:/etc/crowdsec          # config, machine credentials, console enrollment
+      - ./acquis.d:/etc/crowdsec/acquis.d:ro                 # which logs to read
+      - crowdsec-data:/var/lib/crowdsec/data                 # decisions DB and GeoIP data (rebuildable)
+      - crowdsec-hub:/etc/crowdsec/hub                       # downloaded rules (rebuildable; kept out of /home so backups skip it)
+      - /home/docker/npm/data/logs:/var/log/npm:ro
+    ports:
+      - 127.0.0.1:8280:8080   # local API, for the host bouncer only
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    networks:
+      - default
+      - npm-network   # so Homepage's CrowdSec widget can reach the API at http://crowdsec:8080
+    labels:
+      autoheal: "true"
+      com.centurylinklabs.watchtower.monitor-only: "false"   # security software: auto-update
+
+volumes:
+  crowdsec-data:
+  crowdsec-hub:
+
+networks:
+  npm-network:
+    external: true

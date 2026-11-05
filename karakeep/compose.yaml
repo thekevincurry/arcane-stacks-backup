@@ -2,6 +2,8 @@ services:
   karakeep:
     image: ghcr.io/karakeep-app/karakeep:release
     container_name: karakeep
+    labels:
+      autoheal: "true"
     restart: unless-stopped
     networks:
       - karakeep_net

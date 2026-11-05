@@ -1,0 +1,22 @@
+# HSA bill processor: Paperless workflow webhook -> Claude extracts the bill total ->
+# appends a row to the HSA Google Sheet -> tags the document "HSA Logged".
+# Source lives in this folder. The Google service-account key stays outside the git
+# backup, in /home/docker/hsa-processor/secrets. Secrets and IDs are in .env.
+services:
+  hsa-processor:
+    build: .
+    image: hsa-processor:latest
+    container_name: hsa-processor
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /home/docker/hsa-processor/secrets:/secrets:ro
+    networks:
+      - super_1_1_default
+
+networks:
+  # Shared with paperless_ngx, which this service calls as http://paperless-ngx:8000.
+  super_1_1_default:
+    external: true

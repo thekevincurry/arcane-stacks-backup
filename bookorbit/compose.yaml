@@ -3,6 +3,8 @@ name: bookorbit
 services:
   app:
     container_name: bookorbit-app
+    labels:
+      autoheal: "true"
     image: ${APP_IMAGE:-ghcr.io/bookorbit/bookorbit:latest}
     restart: unless-stopped
     init: true
@@ -57,6 +59,8 @@ services:
 
   postgres:
     container_name: bookorbit-db
+    labels:
+      autoheal: "true"
     image: pgvector/pgvector:pg18
     restart: unless-stopped
     environment:
