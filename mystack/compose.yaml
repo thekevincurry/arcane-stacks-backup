@@ -54,7 +54,9 @@ services:
       com.centurylinklabs.watchtower.monitor-only: "false"
     restart: unless-stopped
     # Notify-only by default; containers labelled watchtower.monitor-only=false are updated automatically.
-    command: --schedule "0 0 5 * * *" --cleanup --monitor-only --label-take-precedence --notification-report --no-startup-message
+    command: --schedule "0 0 5 * * *" --cleanup --monitor-only --label-take-precedence --notification-report --no-startup-message --http-api-metrics
+    # --http-api-metrics: read-only scan/update/fail counts on :8080 (token-protected) for the Homepage tile.
+    # It does not enable --http-api-update, so the 05:00 schedule is unchanged.
     depends_on:
       - docker-socket-proxy-watchtower
     environment:
@@ -62,6 +64,7 @@ services:
       - DOCKER_HOST=tcp://docker-socket-proxy-watchtower:2375
       - WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL}
       - WATCHTOWER_NOTIFICATIONS_HOSTNAME=homeserver
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_API_TOKEN}
       - WATCHTOWER_NOTIFICATION_TITLE_TAG=Watchtower
       - |
         WATCHTOWER_NOTIFICATION_TEMPLATE=
@@ -226,6 +229,9 @@ services:
       - HOMEPAGE_FILE_BLACKBOX_PASSWORD=/app/config/secrets/BLACKBOX_PASSWORD
       - HOMEPAGE_FILE_SABNZBD_KEY=/app/config/secrets/SABNZBD_KEY
       - HOMEPAGE_FILE_CROWDSEC_PASSWORD=/app/config/secrets/CROWDSEC_PASSWORD
+      - HOMEPAGE_FILE_GLUETUN_KEY=/app/config/secrets/GLUETUN_KEY
+      - HOMEPAGE_FILE_WATCHTOWER_KEY=/app/config/secrets/WATCHTOWER_KEY
+      - HOMEPAGE_FILE_ARCANE_KEY=/app/config/secrets/ARCANE_KEY
     volumes:
       - ${DOCKER_CONFIG_PATH}/homepage:/app/config
     networks:
@@ -512,8 +518,9 @@ services:
       - VPN_PORT_FORWARDING_PROVIDER=protonvpn
       # Run this whenever Proton hands out a new port. qBit shares this
       # container's netns, so 127.0.0.1:WEBUI_PORT IS the qBit WebUI.
-      # --retry-connrefused handles the startup race if qBit isn't up yet.
-      - 'VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c ''wget -qO- --retry-connrefused --tries=5 --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:${QBIT_WEBUI_PORT:-8090}/api/v2/app/setPreferences'''
+      # qBit often isn't up yet when this runs (boot, or both containers restarting), so it
+      # retries every 5 s for up to 5 minutes. ($$ is compose's escape for a literal $.)
+      - 'VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c ''for i in $$(seq 1 60); do wget -qO- --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:${QBIT_WEBUI_PORT:-8090}/api/v2/app/setPreferences && exit 0; sleep 5; done; exit 1'''
     volumes:
       - ${DOCKER_CONFIG_PATH}/gluetun:/gluetun
     networks:
